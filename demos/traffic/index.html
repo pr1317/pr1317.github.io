@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Traffic Monitor Playback</title>
+<meta name="description" content="Scrub through the YOLO vehicle detection and counting pipeline running on a real highway camera clip.">
+<style>
+  :root{
+    --bg:#f6f7f5; --panel:#ffffff; --ink:#1f2933; --muted:#6b7684;
+    --line:#e3e6e1; --accent:#2f6f4e; --accent-soft:#e8f1ec;
+    --truck:#347ad6; --radius:10px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#14171a; --panel:#1c2024; --ink:#e8eaec; --muted:#9aa4b0;
+           --line:#2c3238; --accent:#6bb894; --accent-soft:#23332b; --truck:#6fa8e8; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif}
+  header{max-width:1000px;margin:0 auto;padding:36px 20px 10px}
+  h1{margin:0 0 6px;font-size:26px;letter-spacing:-.02em}
+  .sub{color:var(--muted);margin:0;max-width:66ch}
+  .sub a{color:var(--accent)}
+  main{max-width:1000px;margin:0 auto;padding:16px 20px 20px;
+    display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:20px;align-items:start}
+  @media (max-width:820px){ main{grid-template-columns:1fr} }
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px}
+  h2{margin:0 0 12px;font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+  .stage{position:relative;background:#0d0f11;border-radius:8px;overflow:hidden;border:1px solid var(--line)}
+  .stage img{display:block;width:100%;image-rendering:auto}
+  .controls{display:flex;align-items:center;gap:12px;margin-top:12px}
+  button{padding:8px 16px;border-radius:7px;border:1px solid var(--line);
+    background:var(--bg);color:var(--ink);font:inherit;font-size:13.5px;cursor:pointer}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;min-width:82px}
+  input[type=range]{flex:1;accent-color:var(--accent)}
+  .tick{font-variant-numeric:tabular-nums;color:var(--muted);font-size:12.5px;min-width:74px;text-align:right}
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:6px}
+  .stat{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+  .stat .v{font-size:24px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .stat .k{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+  .spark{margin-top:14px}
+  .spark svg{width:100%;height:78px;display:block}
+  .legend{display:flex;gap:14px;font-size:12.5px;color:var(--muted);margin-top:8px}
+  .swatch{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:6px}
+  td{padding:5px 0;border-bottom:1px solid var(--line)}
+  td:last-child{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+  tr:last-child td{border-bottom:0}
+  .note{font-size:12.5px;color:var(--muted);margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+  footer{max-width:1000px;margin:0 auto;padding:6px 20px 44px;color:var(--muted);font-size:13px}
+  footer a{color:var(--accent)}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
+    background:var(--bg);padding:1px 5px;border-radius:4px;border:1px solid var(--line)}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Traffic monitor playback</h1>
+  <p class="sub">
+    Every frame here is real output from the pipeline in this repository — YOLOv4-tiny
+    through OpenCV, a centroid tracker holding vehicle identity between frames, and a
+    counting line that turns detections into a throughput number. Scrub or press play.
+  </p>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>Annotated output</h2>
+    <div class="stage"><img id="frame" alt="Annotated traffic frame"></div>
+    <div class="controls">
+      <button id="play" class="primary">Play</button>
+      <input id="scrub" type="range" min="0" max="0" value="0" step="1" aria-label="frame">
+      <span class="tick" id="tick">frame 0</span>
+    </div>
+    <p class="note">
+      Green boxes are cars, blue are trucks; white dots are tracked centroids with their
+      track id. The red line is the counting line — a vehicle is added to the total the
+      first time its track crosses it, which is why the count never double-counts a car
+      sitting in frame.
+    </p>
+  </section>
+
+  <section class="panel">
+    <h2>Live counters</h2>
+    <div class="stats">
+      <div class="stat"><div class="v" id="visible">0</div><div class="k">in frame</div></div>
+      <div class="stat"><div class="v" id="crossed">0</div><div class="k">crossed the line</div></div>
+    </div>
+
+    <div class="spark">
+      <svg id="spark" viewBox="0 0 300 78" preserveAspectRatio="none" aria-hidden="true"></svg>
+      <div class="legend">
+        <span><span class="swatch" style="background:var(--accent)"></span>vehicles in frame</span>
+        <span><span class="swatch" style="background:var(--muted)"></span>current position</span>
+      </div>
+    </div>
+
+    <h2 style="margin-top:20px">Totals for the clip</h2>
+    <table id="totals"></table>
+
+    <p class="note">
+      500 frames at 320&times;240, processed at <code>8.2</code> fps on a two-core CPU with
+      no GPU. Detection accuracy is deliberately <em>not</em> claimed: the clip ships
+      without labels. What the repository does report is a
+      <a href="https://github.com/pr1317/smart-traffic-management#where-it-breaks">near-field limitation study</a>
+      showing where this detector stops working, and why.
+    </p>
+  </section>
+</main>
+
+<footer>
+  Sample footage from the public
+  <a href="https://github.com/andrewssobral/vehicle_detection_haarcascades">vehicle_detection_haarcascades</a>
+  dataset.
+  <a href="https://github.com/pr1317/smart-traffic-management">Source, pipeline and results on GitHub</a>.
+</footer>
+
+<script src="timeline.js"></script>
+<script>
+(function(){
+  "use strict";
+  var data = window.TRAFFIC_TIMELINE;
+  if (!data || !data.timeline.length) return;
+
+  var timeline = data.timeline;
+  var image = document.getElementById("frame");
+  var scrub = document.getElementById("scrub");
+  var playButton = document.getElementById("play");
+  var index = 0, timer = null;
+
+  scrub.max = timeline.length - 1;
+
+  // Warm the cache so scrubbing does not flicker.
+  timeline.forEach(function(step){ var pre = new Image(); pre.src = step.file; });
+
+  var peak = timeline.reduce(function(max, step){ return Math.max(max, step.visible); }, 1);
+
+  function buildSpark(){
+    var svg = document.getElementById("spark");
+    var width = 300, height = 78, pad = 4;
+    var points = timeline.map(function(step, i){
+      var x = (i / (timeline.length - 1)) * width;
+      var y = height - pad - (step.visible / peak) * (height - pad * 2);
+      return x.toFixed(1) + "," + y.toFixed(1);
+    });
+    var area = "0," + height + " " + points.join(" ") + " " + width + "," + height;
+    svg.innerHTML =
+      '<polygon points="' + area + '" fill="var(--accent-soft)"></polygon>' +
+      '<polyline points="' + points.join(" ") + '" fill="none" stroke="var(--accent)" stroke-width="1.5"></polyline>' +
+      '<line id="cursor" x1="0" y1="0" x2="0" y2="' + height + '" stroke="var(--muted)" stroke-width="1"></line>';
+  }
+
+  function renderTotals(step){
+    var table = document.getElementById("totals");
+    var rows = Object.keys(step.classes).map(function(name){
+      return "<tr><td>" + name + "</td><td>" + step.classes[name] + "</td></tr>";
+    });
+    rows.push("<tr><td><strong>total</strong></td><td>" + step.crossed + "</td></tr>");
+    table.innerHTML = rows.join("");
+  }
+
+  function show(i){
+    index = Math.max(0, Math.min(timeline.length - 1, i));
+    var step = timeline[index];
+    image.src = step.file;
+    scrub.value = index;
+    document.getElementById("tick").textContent = "frame " + step.frame;
+    document.getElementById("visible").textContent = step.visible;
+    document.getElementById("crossed").textContent = step.crossed;
+    renderTotals(step);
+    var cursor = document.getElementById("cursor");
+    if (cursor){
+      var x = (index / (timeline.length - 1)) * 300;
+      cursor.setAttribute("x1", x); cursor.setAttribute("x2", x);
+    }
+  }
+
+  function stop(){
+    if (timer){ clearInterval(timer); timer = null; }
+    playButton.textContent = "Play";
+  }
+
+  playButton.addEventListener("click", function(){
+    if (timer){ stop(); return; }
+    if (index >= timeline.length - 1) index = -1;
+    playButton.textContent = "Pause";
+    timer = setInterval(function(){
+      if (index >= timeline.length - 1){ stop(); return; }
+      show(index + 1);
+    }, 110);
+  });
+
+  scrub.addEventListener("input", function(){ stop(); show(Number(scrub.value)); });
+
+  buildSpark();
+  show(0);
+})();
+</script>
+</body>
+</html>

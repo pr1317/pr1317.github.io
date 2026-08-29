@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Churn Risk Scorer — live demo</title>
+<meta name="description" content="Score a telecom customer's churn risk in the browser using the exported logistic regression model.">
+<style>
+  :root{
+    --bg:#f6f7f5; --panel:#ffffff; --ink:#1f2933; --muted:#6b7684;
+    --line:#e3e6e1; --accent:#2f6f4e; --accent-soft:#e8f1ec;
+    --warn:#b4571f; --danger:#a8322a; --radius:10px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#14171a; --panel:#1c2024; --ink:#e8eaec; --muted:#9aa4b0;
+           --line:#2c3238; --accent:#6bb894; --accent-soft:#23332b;
+           --warn:#e08b4e; --danger:#e0736a; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;}
+  header{max-width:1040px;margin:0 auto;padding:36px 20px 12px}
+  h1{margin:0 0 6px;font-size:26px;letter-spacing:-.02em}
+  .sub{color:var(--muted);margin:0;max-width:64ch}
+  .sub a{color:var(--accent)}
+  main{max-width:1040px;margin:0 auto;padding:16px 20px 64px;
+    display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+  @media (max-width:860px){ main{grid-template-columns:1fr} }
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px}
+  h2{margin:0 0 14px;font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+  .presets{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+  .presets button{background:var(--accent-soft);color:var(--accent);border:1px solid transparent;
+    border-radius:999px;padding:6px 13px;font-size:13px;cursor:pointer;font-weight:600}
+  .presets button:hover{border-color:var(--accent)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px}
+  @media (max-width:520px){ .grid{grid-template-columns:1fr} }
+  label{display:block;font-size:12px;color:var(--muted);margin-bottom:3px}
+  select,input[type=number]{width:100%;padding:7px 9px;border:1px solid var(--line);
+    border-radius:7px;background:var(--bg);color:var(--ink);font-size:14px;font-family:inherit}
+  .full{grid-column:1/-1}
+  .gauge{text-align:center;padding:6px 0 14px}
+  .score{font-size:52px;font-weight:700;letter-spacing:-.03em;line-height:1}
+  .verdict{font-weight:600;margin-top:4px}
+  .bar{height:9px;border-radius:99px;background:var(--line);overflow:hidden;margin:14px 0 6px}
+  .bar span{display:block;height:100%;transition:width .25s ease}
+  .scale{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
+  .drivers{list-style:none;margin:14px 0 0;padding:0}
+  .drivers li{display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .drivers li:last-child{border-bottom:0}
+  .drivers .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chip{font-variant-numeric:tabular-nums;font-size:12px;font-weight:600;padding:1px 7px;border-radius:5px}
+  .up{background:rgba(168,50,42,.13);color:var(--danger)}
+  .down{background:var(--accent-soft);color:var(--accent)}
+  .note{font-size:12.5px;color:var(--muted);margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
+    background:var(--bg);padding:1px 5px;border-radius:4px;border:1px solid var(--line)}
+  footer{max-width:1040px;margin:0 auto;padding:0 20px 40px;color:var(--muted);font-size:13px}
+  footer a{color:var(--accent)}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Churn risk scorer</h1>
+  <p class="sub">
+    The logistic regression trained in this repository, exported to JSON and run in your
+    browser. Nothing is sent anywhere — the maths is a dot product, and a
+    <a href="https://github.com/pr1317/customer-churn-analytics/blob/main/tests/test_web_scorer.js">parity test</a>
+    checks it reproduces the Python model to 1e-9.
+  </p>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>Customer</h2>
+    <div class="presets">
+      <button data-preset="risky">New fibre customer</button>
+      <button data-preset="loyal">Long-tenure family</button>
+      <button data-preset="middle">Mid-contract, no add-ons</button>
+    </div>
+    <div class="grid" id="form"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Predicted risk</h2>
+    <div class="gauge">
+      <div class="score" id="score">—</div>
+      <div class="verdict" id="verdict">probability of churn</div>
+      <div class="bar"><span id="bar" style="width:0%"></span></div>
+      <div class="scale"><span>0%</span><span id="thresholdLabel">decision threshold 0.56</span><span>100%</span></div>
+    </div>
+    <h2 style="margin-top:6px">What is driving it</h2>
+    <ul class="drivers" id="drivers"></ul>
+    <p class="note">
+      Bars show each feature's contribution to the log-odds: red pushes the customer
+      towards leaving, green towards staying. Above the tuned threshold of
+      <code>0.56</code> the customer would enter the retention campaign.
+    </p>
+  </section>
+</main>
+
+<footer>
+  Model: logistic regression, ROC-AUC 0.846 on a held-out 20% of the
+  IBM Telco churn dataset (7,043 customers).
+  <a href="https://github.com/pr1317/customer-churn-analytics">Source and notebook on GitHub</a>.
+</footer>
+
+<script src="model.js"></script>
+<script src="scorer.js"></script>
+<script>
+(function(){
+  "use strict";
+  var YESNO = ["Yes","No"];
+  var FIELDS = [
+    {key:"tenure", label:"Tenure (months)", type:"number", min:0, max:100, step:1},
+    {key:"MonthlyCharges", label:"Monthly charges", type:"number", min:0, max:200, step:0.05},
+    {key:"TotalCharges", label:"Total charges to date", type:"number", min:0, max:10000, step:0.05},
+    {key:"Contract", label:"Contract", options:["Month-to-month","One year","Two year"]},
+    {key:"InternetService", label:"Internet service", options:["DSL","Fiber optic","No"]},
+    {key:"PaymentMethod", label:"Payment method", options:[
+      "Electronic check","Mailed check","Bank transfer (automatic)","Credit card (automatic)"]},
+    {key:"OnlineSecurity", label:"Online security", options:["Yes","No","No internet service"]},
+    {key:"TechSupport", label:"Tech support", options:["Yes","No","No internet service"]},
+    {key:"OnlineBackup", label:"Online backup", options:["Yes","No","No internet service"]},
+    {key:"DeviceProtection", label:"Device protection", options:["Yes","No","No internet service"]},
+    {key:"StreamingTV", label:"Streaming TV", options:["Yes","No","No internet service"]},
+    {key:"StreamingMovies", label:"Streaming movies", options:["Yes","No","No internet service"]},
+    {key:"PhoneService", label:"Phone service", options:YESNO},
+    {key:"MultipleLines", label:"Multiple lines", options:["Yes","No","No phone service"]},
+    {key:"PaperlessBilling", label:"Paperless billing", options:YESNO},
+    {key:"Partner", label:"Has partner", options:YESNO},
+    {key:"Dependents", label:"Has dependents", options:YESNO},
+    {key:"SeniorCitizen", label:"Senior citizen", options:["0","1"]},
+    {key:"gender", label:"Gender", options:["Female","Male"]}
+  ];
+
+  var PRESETS = {
+    risky:{gender:"Female",SeniorCitizen:"0",Partner:"No",Dependents:"No",tenure:1,
+      PhoneService:"Yes",MultipleLines:"No",InternetService:"Fiber optic",
+      OnlineSecurity:"No",OnlineBackup:"No",DeviceProtection:"No",TechSupport:"No",
+      StreamingTV:"Yes",StreamingMovies:"Yes",Contract:"Month-to-month",
+      PaperlessBilling:"Yes",PaymentMethod:"Electronic check",
+      MonthlyCharges:95,TotalCharges:95},
+    loyal:{gender:"Male",SeniorCitizen:"0",Partner:"Yes",Dependents:"Yes",tenure:68,
+      PhoneService:"Yes",MultipleLines:"Yes",InternetService:"DSL",
+      OnlineSecurity:"Yes",OnlineBackup:"Yes",DeviceProtection:"Yes",TechSupport:"Yes",
+      StreamingTV:"No",StreamingMovies:"No",Contract:"Two year",
+      PaperlessBilling:"No",PaymentMethod:"Bank transfer (automatic)",
+      MonthlyCharges:65,TotalCharges:4400},
+    middle:{gender:"Female",SeniorCitizen:"0",Partner:"No",Dependents:"No",tenure:20,
+      PhoneService:"Yes",MultipleLines:"No",InternetService:"DSL",
+      OnlineSecurity:"No",OnlineBackup:"No",DeviceProtection:"No",TechSupport:"No",
+      StreamingTV:"No",StreamingMovies:"No",Contract:"One year",
+      PaperlessBilling:"Yes",PaymentMethod:"Mailed check",
+      MonthlyCharges:56,TotalCharges:1120}
+  };
+
+  var THRESHOLD = 0.56;
+  var form = document.getElementById("form");
+  var inputs = {};
+
+  FIELDS.forEach(function(field){
+    var wrap = document.createElement("div");
+    if (field.key === "PaymentMethod") wrap.className = "full";
+    var label = document.createElement("label");
+    label.textContent = field.label;
+    label.setAttribute("for", "f_" + field.key);
+    wrap.appendChild(label);
+
+    var control;
+    if (field.options){
+      control = document.createElement("select");
+      field.options.forEach(function(option){
+        var element = document.createElement("option");
+        element.value = option; element.textContent = option;
+        control.appendChild(element);
+      });
+    } else {
+      control = document.createElement("input");
+      control.type = "number";
+      control.min = field.min; control.max = field.max; control.step = field.step;
+    }
+    control.id = "f_" + field.key;
+    control.addEventListener("input", score);
+    control.addEventListener("change", score);
+    wrap.appendChild(control);
+    form.appendChild(wrap);
+    inputs[field.key] = control;
+  });
+
+  function apply(preset){
+    Object.keys(preset).forEach(function(key){
+      if (inputs[key]) inputs[key].value = preset[key];
+    });
+    score();
+  }
+
+  document.querySelectorAll(".presets button").forEach(function(button){
+    button.addEventListener("click", function(){ apply(PRESETS[button.dataset.preset]); });
+  });
+
+  function readForm(){
+    var row = {};
+    Object.keys(inputs).forEach(function(key){ row[key] = inputs[key].value; });
+    ["tenure","MonthlyCharges","TotalCharges","SeniorCitizen"].forEach(function(key){
+      row[key] = Number(row[key]);
+    });
+    return row;
+  }
+
+  function verdictFor(probability){
+    if (probability >= 0.75) return ["High risk — call now", "var(--danger)"];
+    if (probability >= THRESHOLD) return ["At risk — include in campaign", "var(--warn)"];
+    if (probability >= 0.30) return ["Watch list", "var(--warn)"];
+    return ["Low risk — no action", "var(--accent)"];
+  }
+
+  function score(){
+    var row = readForm();
+    var probability;
+    try {
+      probability = ChurnScorer.predictProbability(row, window.CHURN_MODEL);
+    } catch (error) {
+      document.getElementById("verdict").textContent = error.message;
+      return;
+    }
+
+    var verdict = verdictFor(probability);
+    var scoreEl = document.getElementById("score");
+    scoreEl.textContent = (probability * 100).toFixed(1) + "%";
+    scoreEl.style.color = verdict[1];
+    var verdictEl = document.getElementById("verdict");
+    verdictEl.textContent = verdict[0];
+    verdictEl.style.color = verdict[1];
+
+    var bar = document.getElementById("bar");
+    bar.style.width = (probability * 100).toFixed(1) + "%";
+    bar.style.background = verdict[1];
+
+    var drivers = ChurnScorer.contributions(row, window.CHURN_MODEL).slice(0, 8);
+    var list = document.getElementById("drivers");
+    list.innerHTML = "";
+    drivers.forEach(function(driver){
+      var item = document.createElement("li");
+      var name = document.createElement("span");
+      name.className = "name";
+      name.textContent = driver.name;
+      var chip = document.createElement("span");
+      chip.className = "chip " + (driver.effect > 0 ? "up" : "down");
+      chip.textContent = (driver.effect > 0 ? "+" : "") + driver.effect.toFixed(2);
+      item.appendChild(name); item.appendChild(chip);
+      list.appendChild(item);
+    });
+  }
+
+  document.getElementById("thresholdLabel").textContent = "decision threshold " + THRESHOLD;
+  apply(PRESETS.risky);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Draw a digit — MNIST recognizer</title>
+<meta name="description" content="Draw a digit and the MNIST neural network trained in this repository recognises it, entirely in your browser.">
+<style>
+  :root{
+    --bg:#f6f7f5; --panel:#ffffff; --ink:#1f2933; --muted:#6b7684;
+    --line:#e3e6e1; --accent:#2f6f4e; --accent-soft:#e8f1ec; --radius:10px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#14171a; --panel:#1c2024; --ink:#e8eaec; --muted:#9aa4b0;
+           --line:#2c3238; --accent:#6bb894; --accent-soft:#23332b; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif}
+  header{max-width:960px;margin:0 auto;padding:36px 20px 10px}
+  h1{margin:0 0 6px;font-size:26px;letter-spacing:-.02em}
+  .sub{color:var(--muted);margin:0;max-width:64ch}
+  .sub a{color:var(--accent)}
+  main{max-width:960px;margin:0 auto;padding:16px 20px 20px;
+    display:grid;grid-template-columns:minmax(0,320px) minmax(0,1fr);gap:20px;align-items:start}
+  @media (max-width:760px){ main{grid-template-columns:1fr} }
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px}
+  h2{margin:0 0 12px;font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+  #pad{width:100%;aspect-ratio:1;border-radius:8px;background:#0d0f11;cursor:crosshair;
+    touch-action:none;display:block;border:1px solid var(--line)}
+  .row{display:flex;gap:8px;margin-top:12px}
+  button{flex:1;padding:8px 12px;border-radius:7px;border:1px solid var(--line);
+    background:var(--bg);color:var(--ink);font:inherit;font-size:13.5px;cursor:pointer}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  button:hover{border-color:var(--accent)}
+  .verdict{display:flex;align-items:baseline;gap:12px;margin-bottom:6px}
+  .big{font-size:64px;font-weight:700;line-height:1;letter-spacing:-.04em;color:var(--accent);
+    font-variant-numeric:tabular-nums}
+  .conf{color:var(--muted);font-size:14px}
+  .bars{margin-top:10px}
+  .bars .b{display:flex;align-items:center;gap:9px;margin:3px 0;font-size:13px}
+  .bars .d{width:14px;text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
+  .bars .track{flex:1;height:8px;background:var(--line);border-radius:99px;overflow:hidden}
+  .bars .fill{height:100%;background:var(--accent);border-radius:99px;transition:width .12s linear}
+  .bars .pct{width:46px;text-align:right;font-variant-numeric:tabular-nums;color:var(--muted);font-size:12px}
+  .pipeline{display:flex;align-items:center;gap:14px;margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
+  .pipeline canvas{width:84px;height:84px;image-rendering:pixelated;border-radius:6px;border:1px solid var(--line);background:#0d0f11}
+  .pipeline .cap{font-size:11.5px;color:var(--muted);text-align:center;margin-top:4px}
+  .pipeline .step{text-align:center}
+  .arrow{color:var(--muted);font-size:18px}
+  .note{font-size:12.5px;color:var(--muted);margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
+    background:var(--bg);padding:1px 5px;border-radius:4px;border:1px solid var(--line)}
+  footer{max-width:960px;margin:0 auto;padding:6px 20px 44px;color:var(--muted);font-size:13px}
+  footer a{color:var(--accent)}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Draw a digit</h1>
+  <p class="sub">
+    The 784-256-10 network trained on MNIST in this repository, quantised to int8 and
+    running in your browser — 98.5% accurate on the 10,000 held-out test digits.
+    Draw big and roughly centred.
+  </p>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>Your drawing</h2>
+    <canvas id="pad" width="280" height="280"></canvas>
+    <div class="row">
+      <button id="clear">Clear</button>
+      <button id="example" class="primary">Random test digit</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Prediction</h2>
+    <div class="verdict">
+      <span class="big" id="digit">—</span>
+      <span class="conf" id="conf">draw something to start</span>
+    </div>
+    <div class="bars" id="bars"></div>
+
+    <div class="pipeline">
+      <div class="step">
+        <canvas id="normalised" width="28" height="28"></canvas>
+        <div class="cap">normalised</div>
+      </div>
+      <span class="arrow">→</span>
+      <div class="step">
+        <canvas id="deskewed" width="28" height="28"></canvas>
+        <div class="cap">deskewed</div>
+      </div>
+      <span class="arrow">→</span>
+      <div class="step" style="flex:1">
+        <div class="cap" style="text-align:left;margin-top:0">
+          What the model actually sees. Your drawing is cropped to the ink, scaled so
+          its long side is 20px, centred by centre of mass, then de-slanted — exactly
+          how MNIST itself was built.
+        </div>
+      </div>
+    </div>
+
+    <p class="note">
+      Model file is <span id="size">268</span> KB. The int8 quantisation costs
+      under <code>0.05</code> percentage points of accuracy versus float32, measured in
+      <code>scripts/export_web_model.py</code>, and a
+      <a href="https://github.com/pr1317/handwritten-digit-recognition/blob/main/tests/test_web_recognizer.js">parity test</a>
+      checks this page agrees with scikit-learn to 1e-6.
+    </p>
+  </section>
+</main>
+
+<footer>
+  Trained on the 60,000 MNIST training images; accuracy measured on the standard
+  10,000-image test set.
+  <a href="https://github.com/pr1317/handwritten-digit-recognition">Source, notebook and full results on GitHub</a>.
+</footer>
+
+<script src="model.js"></script>
+<script src="recognizer.js"></script>
+<script src="examples.js"></script>
+<script>
+(function(){
+  "use strict";
+  var pad = document.getElementById("pad");
+  var context = pad.getContext("2d", { willReadFrequently: true });
+  var drawing = false, hasInk = false, lastPoint = null;
+
+  function reset(){
+    context.fillStyle = "#0d0f11";
+    context.fillRect(0, 0, pad.width, pad.height);
+    context.strokeStyle = "#ffffff";
+    context.lineWidth = 20;
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    hasInk = false;
+    lastPoint = null;
+    pinnedMatrix = null;
+    document.getElementById("digit").textContent = "—";
+    document.getElementById("conf").textContent = "draw something to start";
+    renderBars(null);
+    clearPreview("normalised");
+    clearPreview("deskewed");
+  }
+
+  function pointFrom(event){
+    var rect = pad.getBoundingClientRect();
+    var source = event.touches ? event.touches[0] : event;
+    return {
+      x: (source.clientX - rect.left) * (pad.width / rect.width),
+      y: (source.clientY - rect.top) * (pad.height / rect.height)
+    };
+  }
+
+  function start(event){
+    event.preventDefault();
+    if (pinnedMatrix){ reset(); }   // a new stroke replaces the loaded example
+    drawing = true;
+    lastPoint = pointFrom(event);
+    dot(lastPoint);
+  }
+  function dot(point){
+    context.beginPath();
+    context.arc(point.x, point.y, context.lineWidth / 2, 0, Math.PI * 2);
+    context.fillStyle = "#ffffff";
+    context.fill();
+    hasInk = true;
+  }
+  function move(event){
+    if (!drawing) return;
+    event.preventDefault();
+    var point = pointFrom(event);
+    context.beginPath();
+    context.moveTo(lastPoint.x, lastPoint.y);
+    context.lineTo(point.x, point.y);
+    context.stroke();
+    lastPoint = point;
+    hasInk = true;
+    predict();
+  }
+  function end(){ if (drawing){ drawing = false; predict(); } }
+
+  ["mousedown","touchstart"].forEach(function(e){ pad.addEventListener(e, start, {passive:false}); });
+  ["mousemove","touchmove"].forEach(function(e){ pad.addEventListener(e, move, {passive:false}); });
+  ["mouseup","mouseleave","touchend","touchcancel"].forEach(function(e){ pad.addEventListener(e, end); });
+
+  function clearPreview(id){
+    var canvas = document.getElementById(id);
+    var ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#0d0f11";
+    ctx.fillRect(0, 0, 28, 28);
+  }
+
+  function drawPreview(id, matrix){
+    var canvas = document.getElementById(id);
+    var ctx = canvas.getContext("2d");
+    var image = ctx.createImageData(28, 28);
+    for (var i = 0; i < 28; i++){
+      for (var j = 0; j < 28; j++){
+        var value = Math.max(0, Math.min(255, matrix[i][j]));
+        var index = (i * 28 + j) * 4;
+        image.data[index] = image.data[index+1] = image.data[index+2] = value;
+        image.data[index+3] = 255;
+      }
+    }
+    ctx.putImageData(image, 0, 0);
+  }
+
+  function renderBars(probabilities){
+    var container = document.getElementById("bars");
+    container.innerHTML = "";
+    for (var digit = 0; digit <= 9; digit++){
+      var probability = probabilities ? probabilities[digit] : 0;
+      var row = document.createElement("div");
+      row.className = "b";
+      row.innerHTML =
+        '<span class="d">' + digit + '</span>' +
+        '<span class="track"><span class="fill" style="width:' + (probability*100).toFixed(1) + '%"></span></span>' +
+        '<span class="pct">' + (probability*100).toFixed(1) + '%</span>';
+      container.appendChild(row);
+    }
+  }
+
+  // When the user picks a real test digit we score the original 28x28 array,
+  // which is exactly what the Python model was evaluated on. Re-normalising an
+  // already-normalised MNIST image through the canvas only adds resampling
+  // noise and would understate the model.
+  var pinnedMatrix = null;
+
+  function predict(){
+    if (!hasInk) return;
+    var normalised = pinnedMatrix || DigitRecognizer.canvasToMnist(pad);
+    if (!normalised) return;
+    drawPreview("normalised", normalised);
+    drawPreview("deskewed", DigitRecognizer.deskew(normalised));
+
+    var flat = [];
+    for (var i = 0; i < 28; i++) for (var j = 0; j < 28; j++) flat.push(normalised[i][j]);
+    var result = DigitRecognizer.predictFromPixels(flat, window.DIGIT_MODEL);
+
+    document.getElementById("digit").textContent = result.digit;
+    document.getElementById("conf").textContent =
+      (result.confidence * 100).toFixed(1) + "% confident";
+    renderBars(result.probabilities);
+  }
+
+  document.getElementById("clear").addEventListener("click", reset);
+
+  document.getElementById("example").addEventListener("click", function(){
+    var examples = window.MNIST_EXAMPLES || [];
+    if (!examples.length) return;
+    var example = examples[Math.floor(Math.random() * examples.length)];
+
+    // Paint the 28x28 test digit onto the pad so it goes through the same path.
+    context.fillStyle = "#0d0f11";
+    context.fillRect(0, 0, pad.width, pad.height);
+    var cell = pad.width / 28;
+    for (var i = 0; i < 28; i++){
+      for (var j = 0; j < 28; j++){
+        var value = example.pixels[i * 28 + j];
+        if (value <= 0) continue;
+        context.fillStyle = "rgb(" + value + "," + value + "," + value + ")";
+        context.fillRect(j * cell, i * cell, cell, cell);
+      }
+    }
+    context.strokeStyle = "#ffffff";
+    hasInk = true;
+
+    var matrix = [];
+    for (var r = 0; r < 28; r++){
+      matrix.push(example.pixels.slice(r * 28, (r + 1) * 28));
+    }
+    pinnedMatrix = matrix;
+    predict();
+    document.getElementById("conf").textContent +=
+      " · true label " + example.label;
+  });
+
+  if (window.DIGIT_MODEL){
+    document.getElementById("size").textContent =
+      Math.round((window.DIGIT_MODEL.W1.length + window.DIGIT_MODEL.W2.length) / 1024);
+  }
+  reset();
+})();
+</script>
+</body>
+</html>

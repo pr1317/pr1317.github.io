@@ -1,0 +1,43 @@
+{
+	# Railway/Render terminate TLS at their edge and forward plain HTTP,
+	# so Caddy must not try to obtain certificates of its own.
+	auto_https off
+	admin off
+	persist_config off
+}
+
+# Both platforms inject $PORT. 8080 is the local default.
+:{$PORT:8080} {
+	root * /srv
+	encode zstd gzip
+	file_server
+
+	# HTML is revalidated every time, so a redeploy is visible immediately.
+	@html path *.html /
+	header @html Cache-Control "no-cache"
+
+	# The stylesheet and script are not content-hashed, so they get a short
+	# cache rather than an immutable one — a deploy must be able to replace them.
+	header /assets/* Cache-Control "public, max-age=3600"
+
+	# Demo model weights, exported fits and video frames are fixed content per
+	# deploy; cache them hard.
+	header /demos/*/frames/* Cache-Control "public, max-age=604800"
+	header /demos/*/model.json Cache-Control "public, max-age=86400"
+	header /demos/*/demo-data.js Cache-Control "public, max-age=86400"
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		X-Frame-Options SAMEORIGIN
+		-Server
+	}
+
+	handle_errors {
+		@notfound expression {err.status_code} == 404
+		handle @notfound {
+			rewrite * /404.html
+			file_server
+		}
+	}
+}
