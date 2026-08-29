@@ -1,0 +1,38 @@
+name: Deploy the site
+
+# Publishing this repository through the branch source runs it past Jekyll,
+# which has nothing to do here: the site is finished static files with no front
+# matter, no Liquid and no theme. Uploading the tree as-is skips Jekyll
+# altogether, and puts the publishing configuration in the repository rather
+# than in a settings dropdown, where a wrong source folder fails with an error
+# about a directory nobody wrote.
+#
+# Requires: Settings -> Pages -> Source: "GitHub Actions".
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v4
