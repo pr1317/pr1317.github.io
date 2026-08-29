@@ -24,10 +24,19 @@ tar --exclude='./.git' -cf - . | (cd ../pr1317.github.io && tar -xf -)
 cd ../pr1317.github.io && git add -A && git commit -m "Sync from portfolio" && git push
 ```
 
+Set **Settings → Pages → Source** to **GitHub Actions** on the mirror. Its
+`.github/workflows/pages.yml` uploads the tree as-is. The branch source is the
+wrong choice here: it runs the site past Jekyll, which has nothing to do with
+finished static output, and it fails outright if the source folder is set to
+`/docs`. A root `.nojekyll` does not prevent that build from running.
+
+That workflow lives only in the mirror, so a sync must not delete files the
+mirror has and this repository does not — which is why the command above
+extracts over the tree rather than mirroring it with `--delete`.
+
 The Railway-specific files (`Caddyfile`, `Dockerfile`, `railway.json`,
 `render.yaml`) travel with the mirror and are simply unused there. Pages serves
-`404.html` for unknown paths on its own, and `.nojekyll` stops it running the
-tree through Jekyll.
+`404.html` for unknown paths on its own.
 
 ### Railway
 
