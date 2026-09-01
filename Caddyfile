@@ -16,8 +16,9 @@
 	@html path *.html /
 	header @html Cache-Control "no-cache"
 
-	# The stylesheet and script are not content-hashed, so they get a short
-	# cache rather than an immutable one — a deploy must be able to replace them.
+	# The stylesheet and script carry a ?v= build stamp in their URLs, so a new
+	# deploy is fetched under a new URL and can never be masked by a stale or
+	# poisoned cache entry. The bytes themselves stay cacheable for an hour.
 	header /assets/* Cache-Control "public, max-age=3600"
 
 	# Demo model weights, exported fits and video frames are fixed content per
@@ -34,6 +35,12 @@
 	}
 
 	handle_errors {
+		# An error must never be cached. The Cache-Control rules above match on
+		# the REQUEST path, so without this a transient 404 for, say,
+		# /assets/css/style.css during a container swap would be stored for an
+		# hour and the visitor would keep getting an unstyled page long after
+		# the deploy settled. This header is set last, so it wins.
+		header Cache-Control "no-store"
 		@notfound expression {err.status_code} == 404
 		handle @notfound {
 			rewrite * /404.html
